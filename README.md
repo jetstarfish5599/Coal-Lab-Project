@@ -64,7 +64,8 @@ Open Visual Studio.
 Create a new Empty Project.
 
 Follow the instructions from Kip Irvine's "Assembly Language for x86 Processors" textbook to link the Irvine32 library and set up the project properties for MASM.
-
+Similarly you can also do this via following the method provided in Coal Lab 1 by Sir Jahanzaib on GCR.
+ 
 Add the Code:
 
 Add the snake_game.asm (or your file's name) to the project's "Source Files".
