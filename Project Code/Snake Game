@@ -1,0 +1,535 @@
+TITLE Bordered Snake Game (MASM / Irvine32)
+;Project based on proposal by Masoom Khan, Dev Kumar, and Sagbatullah
+INCLUDE Irvine32.inc
+
+; Constants 
+MIN_X = 1
+MAX_X = 78
+MIN_Y = 1
+MAX_Y = 23
+MAX_LENGTH = 200
+
+;snake direction constants
+DIR_RIGHT = 0
+DIR_LEFT  = 1
+DIR_UP    = 2
+DIR_DOWN  = 3
+
+.data
+; Game State Variables 
+snakeBody    COORD MAX_LENGTH dup(?) ;array to hold snake segments
+snakeLength  DWORD 5                ;start length
+snakeDirection DWORD DIR_RIGHT
+foodPosition COORD ?
+score        DWORD 0
+gameOver     DWORD 0                ;boolean flag (0=no, 1=yes)
+gameDelay    DWORD 100              ;speed in milliseconds
+oldTail      COORD ?                ;stores last tail position for erasing
+ateFoodFlag  DWORD 0                ;flag to prevent erasing tail on growth
+
+; Characters & Messages 
+snakeChar    BYTE 'O'
+foodChar     BYTE '@'
+borderChar   BYTE '#'
+scoreMsg     BYTE "Score: ",0
+gameOverMsg1 BYTE "Game Over!",0
+gameOverMsg2 BYTE "Press any key to exit.",0
+
+.code
+main PROC
+    call InitializeGame         ;set up all initial variables
+
+gameLoop:
+    cmp gameOver, 1             ;check if game over flag is set
+    je  showGameOverScreen      ;if yes, jump to end
+
+    call HandleInput            ;check for arrow key presses
+    call UpdateGame             ;move snake, check collisions
+    call DrawGame               ;draw all elements
+    mov  eax, gameDelay
+    call Delay                  ;pause for one game tick
+    jmp  gameLoop
+
+showGameOverScreen:
+    call DisplayGameOver
+    call WaitMsg                ;wait for a key press
+    exit                        ;exit the program
+main ENDP
+
+;
+;InitializeGame PROC
+;Sets up the initial state of the game
+;
+InitializeGame PROC
+    push ebp
+    mov  ebp, esp
+
+    call ClrScr
+    call Randomize              ;seed the random number generator
+    
+    ;set default game state
+    mov  gameOver, 0
+    mov  score, 0
+    mov  snakeLength, 5
+    mov  snakeDirection, DIR_RIGHT
+
+    ;create the initial snake body (5 segments)
+    mov  snakeBody[0 * TYPE COORD].X, 10
+    mov  snakeBody[0 * TYPE COORD].Y, 10
+    mov  snakeBody[1 * TYPE COORD].X, 9
+    mov  snakeBody[1 * TYPE COORD].Y, 10
+    mov  snakeBody[2 * TYPE COORD].X, 8
+    mov  snakeBody[2 * TYPE COORD].Y, 10
+    mov  snakeBody[3 * TYPE COORD].X, 7
+    mov  snakeBody[3 * TYPE COORD].Y, 10
+    mov  snakeBody[4 * TYPE COORD].X, 6
+    mov  snakeBody[4 * TYPE COORD].Y, 10
+
+    call DrawBorder             ;draw the boundary walls
+    call PlaceFood              ;place the first piece of food
+    call UpdateScoreDisplay     ;draw the score
+
+    pop  ebp
+    ret
+InitializeGame ENDP
+
+;
+;HandleInput PROC
+;Checks for user input (arrow keys)
+;
+HandleInput PROC
+    push ebp
+    mov  ebp, esp
+    push eax                    ;preserve registers
+    push edx
+
+    call ReadKey                ;check for key press (non blocking)
+    cmp  eax, 0
+    je   no_input               ;no key was pressed
+
+    ;a key was pressed, check for arrow keys
+    cmp  ah, 48h                ;up arrow
+    je   tryUp
+    cmp  ah, 50h                ;down arrow
+    je   tryDown
+    cmp  ah, 4Bh                ;left arrow
+    je   tryLeft
+    cmp  ah, 4Dh                ;right arrow
+    je   tryRight
+    jmp  no_input               ;not an arrow key
+
+tryUp:
+    mov  edx, snakeDirection
+    cmp  edx, DIR_DOWN          ;prevent 180 degree turn
+    je   no_input
+    mov  snakeDirection, DIR_UP
+    jmp  no_input
+
+tryDown:
+    mov  edx, snakeDirection
+    cmp  edx, DIR_UP            ;prevent 180 degree turn
+    je   no_input
+    mov  snakeDirection, DIR_DOWN
+    jmp  no_input
+
+tryLeft:
+    mov  edx, snakeDirection
+    cmp  edx, DIR_RIGHT         ;prevent 180 degree turn
+    je   no_input
+    mov  snakeDirection, DIR_LEFT
+    jmp  no_input
+
+tryRight:
+    mov  edx, snakeDirection
+    cmp  edx, DIR_LEFT          ;prevent 180 degree turn
+    je   no_input
+    mov  snakeDirection, DIR_RIGHT
+
+no_input:
+    pop  edx                    ;restore registers
+    pop  eax
+    pop  ebp
+    ret
+HandleInput ENDP
+
+;
+;UpdateGame PROC
+;Main game logic update per frame
+;
+UpdateGame PROC
+    push ebp
+    mov  ebp, esp
+
+    call UpdateSnake            ;move the snake's body and head
+    call CheckFoodCollision     ;check if snake ate food
+    call CheckWallCollision     ;check if snake hit a wall
+    call CheckSelfCollision     ;check if snake hit itself
+
+    pop  ebp
+    ret
+UpdateGame ENDP
+
+;
+;UpdateSnake PROC
+;Moves the snake by shifting the body array
+;and calculating a new head position
+;
+UpdateSnake PROC
+    push ebp
+    mov  ebp, esp
+    pushad                      ;save all general purpose registers
+
+    ;save the position of the last tail segment
+    ;this will be erased *if* food isn't eaten
+    mov  ecx, snakeLength
+    dec  ecx
+    mov  esi, OFFSET snakeBody
+    lea  esi, [esi + (ecx * TYPE COORD)] ;esi = &snakeBody[snakeLength-1]
+    mov  ax, [esi].X
+    mov  bx, [esi].Y
+    mov  oldTail.X, ax
+    mov  oldTail.Y, bx
+
+    ;move the snake body: body[i] = body[i-1]
+    ;we do this from tail to head
+    mov  ecx, snakeLength
+    dec  ecx
+    jz   moveHead               ;skip body move if length is 1
+
+    lea  edi, [esi]             ;edi = &snakeBody[snakeLength-1]
+    lea  esi, [esi - TYPE COORD];esi = &snakeBody[snakeLength 2]
+    
+    std                         ;set direction flag (high to low)
+    rep movsd                   ;repeat move dword [esi] -> [edi]
+    cld                         ;clear direction flag (low to high)
+
+moveHead:
+    ;calculate new head position based on direction
+    mov  esi, OFFSET snakeBody  ;esi = &snakeBody[0] (head)
+    mov  ax, [esi].X            ;get current head x
+    mov  bx, [esi].Y            ;get current head y
+
+    mov  ecx, snakeDirection
+    cmp  ecx, DIR_RIGHT
+    je   moveRight
+    cmp  ecx, DIR_LEFT
+    je   moveLeft
+    cmp  ecx, DIR_UP
+    je   moveUp
+    cmp  ecx, DIR_DOWN
+    je   moveDown
+
+moveRight:
+    inc  ax
+    jmp  setNewHead
+moveLeft:
+    dec  ax
+    jmp  setNewHead
+moveUp:
+    dec  bx
+    jmp  setNewHead
+moveDown:
+    inc  bx
+
+setNewHead:
+    mov  [esi].X, ax            ;store new head x
+    mov  [esi].Y, bx            ;store new head y
+
+    popad                       ;restore all registers
+    pop  ebp
+    ret
+UpdateSnake ENDP
+
+;
+;CheckFoodCollision PROC
+;Checks if the snake head is on the food
+;
+CheckFoodCollision PROC
+    push ebp
+    mov  ebp, esp
+    pushad
+
+    mov  ateFoodFlag, 0         ;reset flag
+
+    mov  esi, OFFSET snakeBody  ;get head position
+    mov  ax, [esi].X
+    mov  bx, [esi].Y
+
+    cmp  ax, foodPosition.X     ;compare head.x with food.x
+    jne  noEat
+    cmp  bx, foodPosition.Y     ;compare head.y with food.y
+    jne  noEat
+
+    ; ATE FOOD 
+    mov  ateFoodFlag, 1         ;set flag to prevent tail erase
+    inc  snakeLength            ;increase snake length
+    add  score, 10              ;increase score
+    call UpdateScoreDisplay
+    call PlaceFood              ;find a new spot for food
+
+noEat:
+    popad
+    pop  ebp
+    ret
+CheckFoodCollision ENDP
+
+;
+;CheckWallCollision PROC
+;Checks if the snake head hit the border
+;
+CheckWallCollision PROC
+    push ebp
+    mov  ebp, esp
+    pushad
+
+    mov  esi, OFFSET snakeBody  ;get head position
+    mov  ax, [esi].X
+    mov  bx, [esi].Y
+
+    cmp  ax, MIN_X              ;check left wall
+    jl   setGameOver
+    cmp  ax, MAX_X              ;check right wall
+    jg   setGameOver
+    cmp  bx, MIN_Y              ;check top wall
+    jl   setGameOver
+    cmp  bx, MAX_Y              ;check bottom wall
+    jg   setGameOver
+    jmp  noWallCollision
+
+setGameOver:
+    mov  gameOver, 1            ;set the flag
+
+noWallCollision:
+    popad
+    pop  ebp
+    ret
+CheckWallCollision ENDP
+
+;
+;CheckSelfCollision PROC
+;Checks if the snake head hit its own body
+;
+CheckSelfCollision PROC
+    push ebp
+    mov  ebp, esp
+    pushad
+
+    mov  esi, OFFSET snakeBody  ;get head position
+    mov  ax, [esi].X            ;head.x
+    mov  bx, [esi].Y            ;head.y
+
+    ;point esi to the second segment
+    add  esi, TYPE COORD        ;esi = &snakeBody[1]
+    mov  ecx, snakeLength
+    dec  ecx                    ;loop snakeLength 1 times
+
+    cmp  ecx, 0                 ;no body to check
+    je   noSelfCollision
+
+checkLoop:
+    cmp  ax, [esi].X            ;compare head.x with body[i].x
+    jne  nextSegment
+    cmp  bx, [esi].Y            ;compare head.y with body[i].y
+    jne  nextSegment
+
+    ; COLLISION 
+    mov  gameOver, 1
+    jmp  noSelfCollision
+
+nextSegment:
+    add  esi, TYPE COORD        ;move to next segment
+    loop checkLoop
+
+noSelfCollision:
+    popad
+    pop  ebp
+    ret
+CheckSelfCollision ENDP
+
+;
+;PlaceFood PROC
+;Finds a valid random spot for new food
+;
+PlaceFood PROC
+    push ebp
+    mov  ebp, esp
+    pushad
+
+spawnLoop:
+    ;get random x
+    mov  eax, MAX_X - 1
+    call RandomRange            ;eax = 0 to MAX_X 2
+    add  eax, MIN_X + 1         ;eax = MIN_X+1 to MAX_X 1
+    mov  foodPosition.X, ax
+
+    ;get random y
+    mov  eax, MAX_Y - 1
+    call RandomRange
+    add  eax, MIN_Y + 1
+    mov  foodPosition.Y, ax
+
+    ;check if food spawned *on* the snake
+    mov  ecx, snakeLength
+    mov  esi, OFFSET snakeBody
+checkSnakePos:
+    cmp  ax, [esi].X
+    jne  posOK
+    cmp  foodPosition.Y, [esi].Y
+    jne  posOK
+    
+    ;position is not ok, it's on the snake
+    jmp  spawnLoop              ;try again
+
+posOK:
+    add  esi, TYPE COORD
+    loop checkSnakePos
+
+    ;food position is valid, draw it
+    mov  dh, foodPosition.Y
+    mov  dl, foodPosition.X
+    call Gotoxy
+    mov  al, foodChar
+    call WriteChar
+    
+    popad
+    pop  ebp
+    ret
+PlaceFood ENDP
+
+;
+;DrawGame PROC
+;Main drawing procedure
+;
+DrawGame PROC
+    push ebp
+    mov  ebp, esp
+    pushad
+
+    ;draw the new head
+    mov  esi, OFFSET snakeBody
+    mov  dh, [esi].Y
+    mov  dl, [esi].X
+    call Gotoxy
+    mov  al, snakeChar
+    call WriteChar
+
+    ;erase the old tail *only if* food was not eaten
+    cmp  ateFoodFlag, 1
+    je   skipErase               ;snake grew, don't erase tail
+
+    mov  dh, oldTail.Y
+    mov  dl, oldTail.X
+    call Gotoxy
+    mov  al, ' '                ;draw a blank space
+    call WriteChar
+
+skipErase:
+    popad
+    pop  ebp
+    ret
+DrawGame ENDP
+
+;
+;DrawBorder PROC
+;Draws the boundary walls
+;
+DrawBorder PROC
+    push ebp
+    mov  ebp, esp
+    pushad
+    
+    mov  al, borderChar
+
+    ;draw top and bottom walls
+    mov  ecx, MAX_X - MIN_X + 1
+    mov  dl, MIN_X
+    mov  dh, MIN_Y
+    call Gotoxy
+drawTop:
+    call WriteChar
+    loop drawTop
+    
+    mov  dl, MIN_X
+    mov  dh, MAX_Y
+    call Gotoxy
+    mov  ecx, MAX_X - MIN_X + 1
+drawBottom:
+    call WriteChar
+    loop drawBottom
+
+    ;draw left and right walls
+    mov  ecx, MAX_Y - MIN_Y - 1
+    mov  dl, MIN_X
+    mov  dh, MIN_Y + 1
+    call Gotoxy
+drawLeft:
+    call WriteChar
+    inc  dh
+    call Gotoxy
+    loop drawLeft
+
+    mov  ecx, MAX_Y - MIN_Y - 1
+    mov  dl, MAX_X
+    mov  dh, MIN_Y + 1
+    call Gotoxy
+drawRight:
+    call WriteChar
+    inc  dh
+    call Gotoxy
+    loop drawRight
+
+    popad
+    pop  ebp
+    ret
+DrawBorder ENDP
+
+;
+;UpdateScoreDisplay PROC
+;Writes the current score to the screen
+;
+UpdateScoreDisplay PROC
+    push ebp
+    mov  ebp, esp
+    pushad
+    
+    mov  dh, 0                  ;row 0
+    mov  dl, 0                  ;col 0
+    call Gotoxy
+    mov  edx, OFFSET scoreMsg
+    call WriteString
+    mov  eax, score
+    call WriteDec
+    call WriteString           ;write a space to clear old digits
+    
+    popad
+    pop  ebp
+    ret
+UpdateScoreDisplay ENDP
+
+;
+;DisplayGameOver PROC
+;Shows the game over message
+;
+DisplayGameOver PROC
+    push ebp
+    mov  ebp, esp
+    pushad
+    
+    mov  dh, 10                 ;center ish row
+    mov  dl, 30                 ;center ish col
+    call Gotoxy
+    mov  edx, OFFSET gameOverMsg1
+    call WriteString
+
+    mov  dh, 11
+    mov  dl, 25
+    call Gotoxy
+    mov  edx, OFFSET gameOverMsg2
+    call WriteString
+    
+    popad
+    pop  ebp
+    ret
+DisplayGameOver ENDP
+
+END main
