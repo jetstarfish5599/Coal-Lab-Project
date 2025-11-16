@@ -2,6 +2,10 @@ TITLE Bordered Snake Game (MASM / Irvine32)
 ;Project based on proposal by Masoom Khan, Dev Kumar, and Sagbatullah
 INCLUDE Irvine32.inc
 
+;Define the COORD structure using the correct MASM data type: SWORD
+;REMOVED - This struct is already defined in Irvine32.inc
+;This redefinition was causing all the A2006 errors.
+
 ; Constants 
 MIN_X = 1
 MAX_X = 78
@@ -17,14 +21,15 @@ DIR_DOWN  = 3
 
 .data
 ; Game State Variables 
-snakeBody    COORD MAX_LENGTH dup(?) ;array to hold snake segments
+;Use <> as the default initializer for STRUCTs
+snakeBody    COORD MAX_LENGTH dup( <> ) ;array to hold snake segments
 snakeLength  DWORD 5                ;start length
 snakeDirection DWORD DIR_RIGHT
-foodPosition COORD ?
+foodPosition COORD <>               ;Correct syntax for uninitialized struct
 score        DWORD 0
 gameOver     DWORD 0                ;boolean flag (0=no, 1=yes)
 gameDelay    DWORD 100              ;speed in milliseconds
-oldTail      COORD ?                ;stores last tail position for erasing
+oldTail      COORD <>               ;Correct syntax for uninitialized struct
 ateFoodFlag  DWORD 0                ;flag to prevent erasing tail on growth
 
 ; Characters & Messages 
@@ -185,8 +190,8 @@ UpdateSnake PROC
     dec  ecx
     mov  esi, OFFSET snakeBody
     lea  esi, [esi + (ecx * TYPE COORD)] ;esi = &snakeBody[snakeLength-1]
-    mov  ax, [esi].X
-    mov  bx, [esi].Y
+    mov  ax, (COORD PTR [esi]).X ;Fix: Explicitly cast [esi] as a COORD
+    mov  bx, (COORD PTR [esi]).Y ;Fix: Explicitly cast [esi] as a COORD
     mov  oldTail.X, ax
     mov  oldTail.Y, bx
 
@@ -206,8 +211,8 @@ UpdateSnake PROC
 moveHead:
     ;calculate new head position based on direction
     mov  esi, OFFSET snakeBody  ;esi = &snakeBody[0] (head)
-    mov  ax, [esi].X            ;get current head x
-    mov  bx, [esi].Y            ;get current head y
+    mov  ax, (COORD PTR [esi]).X ;Fix: Explicitly cast [esi] as a COORD
+    mov  bx, (COORD PTR [esi]).Y ;Fix: Explicitly cast [esi] as a COORD
 
     mov  ecx, snakeDirection
     cmp  ecx, DIR_RIGHT
@@ -232,8 +237,8 @@ moveDown:
     inc  bx
 
 setNewHead:
-    mov  [esi].X, ax            ;store new head x
-    mov  [esi].Y, bx            ;store new head y
+    mov  (COORD PTR [esi]).X, ax ;Fix: Explicitly cast [esi] as a COORD
+    mov  (COORD PTR [esi]).Y, bx ;Fix: Explicitly cast [esi] as a COORD
 
     popad                       ;restore all registers
     pop  ebp
@@ -252,8 +257,8 @@ CheckFoodCollision PROC
     mov  ateFoodFlag, 0         ;reset flag
 
     mov  esi, OFFSET snakeBody  ;get head position
-    mov  ax, [esi].X
-    mov  bx, [esi].Y
+    mov  ax, (COORD PTR [esi]).X ;Fix: Explicitly cast [esi] as a COORD
+    mov  bx, (COORD PTR [esi]).Y ;Fix: Explicitly cast [esi] as a COORD
 
     cmp  ax, foodPosition.X     ;compare head.x with food.x
     jne  noEat
@@ -283,8 +288,8 @@ CheckWallCollision PROC
     pushad
 
     mov  esi, OFFSET snakeBody  ;get head position
-    mov  ax, [esi].X
-    mov  bx, [esi].Y
+    mov  ax, (COORD PTR [esi]).X ;Fix: Explicitly cast [esi] as a COORD
+    mov  bx, (COORD PTR [esi]).Y ;Fix: Explicitly cast [esi] as a COORD
 
     cmp  ax, MIN_X              ;check left wall
     jl   setGameOver
@@ -315,8 +320,8 @@ CheckSelfCollision PROC
     pushad
 
     mov  esi, OFFSET snakeBody  ;get head position
-    mov  ax, [esi].X            ;head.x
-    mov  bx, [esi].Y            ;head.y
+    mov  ax, (COORD PTR [esi]).X ;Fix: Explicitly cast [esi] as a COORD
+    mov  bx, (COORD PTR [esi]).Y ;Fix: Explicitly cast [esi] as a COORD
 
     ;point esi to the second segment
     add  esi, TYPE COORD        ;esi = &snakeBody[1]
@@ -327,9 +332,9 @@ CheckSelfCollision PROC
     je   noSelfCollision
 
 checkLoop:
-    cmp  ax, [esi].X            ;compare head.x with body[i].x
+    cmp  ax, (COORD PTR [esi]).X ;Fix: Explicitly cast [esi] as a COORD
     jne  nextSegment
-    cmp  bx, [esi].Y            ;compare head.y with body[i].y
+    cmp  bx, (COORD PTR [esi]).Y ;Fix: Explicitly cast [esi] as a COORD
     jne  nextSegment
 
     ; COLLISION 
@@ -360,21 +365,25 @@ spawnLoop:
     mov  eax, MAX_X - 1
     call RandomRange            ;eax = 0 to MAX_X 2
     add  eax, MIN_X + 1         ;eax = MIN_X+1 to MAX_X 1
-    mov  foodPosition.X, ax
+    mov  foodPosition.X, ax     ;Store X
 
     ;get random y
     mov  eax, MAX_Y - 1
-    call RandomRange
-    add  eax, MIN_Y + 1
-    mov  foodPosition.Y, ax
+    call RandomRange            ;eax = 0 to MAX_Y 2
+    add  eax, MIN_Y + 1         ;eax = MIN_Y+1 to MAX_Y 1
+    mov  foodPosition.Y, ax     ;Store Y (ax is 16-bit)
 
-    ;check if food spawned *on* the snake
+    ;Now check if this position is valid
+    ;Load food's X and Y into 16-bit registers for comparison
+    mov  ax, foodPosition.X
+    mov  bx, foodPosition.Y
+    
     mov  ecx, snakeLength
     mov  esi, OFFSET snakeBody
 checkSnakePos:
-    cmp  ax, [esi].X
+    cmp  ax, (COORD PTR [esi]).X ;Fix: Explicitly cast [esi] as a COORD
     jne  posOK
-    cmp  foodPosition.Y, [esi].Y
+    cmp  bx, (COORD PTR [esi]).Y ;Fix: Explicitly cast [esi] as a COORD
     jne  posOK
     
     ;position is not ok, it's on the snake
@@ -385,9 +394,12 @@ posOK:
     loop checkSnakePos
 
     ;food position is valid, draw it
-    mov  dh, foodPosition.Y
-    mov  dl, foodPosition.X
+    mov  ax, foodPosition.Y
+    mov  dh, al                 ;Fix: Move 16-bit Y into AX, then 8-bit AL into DH
+    mov  ax, foodPosition.X
+    mov  dl, al                 ;Fix: Move 16-bit X into AX, then 8-bit AL into DL
     call Gotoxy
+    
     mov  al, foodChar
     call WriteChar
     
@@ -407,8 +419,10 @@ DrawGame PROC
 
     ;draw the new head
     mov  esi, OFFSET snakeBody
-    mov  dh, [esi].Y
-    mov  dl, [esi].X
+    mov  ax, (COORD PTR [esi]).Y ;Fix: Explicitly cast [esi] as a COORD
+    mov  dh, al                 ;Fix: ...then 8-bit AL into DH
+    mov  ax, (COORD PTR [esi]).X ;Fix: Explicitly cast [esi] as a COORD
+    mov  dl, al                 ;Fix: ...then 8-bit AL into DL
     call Gotoxy
     mov  al, snakeChar
     call WriteChar
@@ -417,8 +431,10 @@ DrawGame PROC
     cmp  ateFoodFlag, 1
     je   skipErase               ;snake grew, don't erase tail
 
-    mov  dh, oldTail.Y
-    mov  dl, oldTail.X
+    mov  ax, oldTail.Y          ;Fix: Move 16-bit Y into AX
+    mov  dh, al                 ;Fix: ...then 8-bit AL into DH
+    mov  ax, oldTail.X          ;Fix: Move 16-bit X into AX
+    mov  dl, al                 ;Fix: ...then 8-bit AL into DL
     call Gotoxy
     mov  al, ' '                ;draw a blank space
     call WriteChar
