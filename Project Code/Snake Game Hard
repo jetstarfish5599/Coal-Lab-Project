@@ -22,7 +22,7 @@ snakeDirection DWORD DIR_RIGHT
 foodPosition COORD <>
 score        DWORD 0
 gameOver     DWORD 0
-gameDelay    DWORD 100
+gameDelay    DWORD 90
 oldTail      COORD <>
 ateFoodFlag  DWORD 0
 
