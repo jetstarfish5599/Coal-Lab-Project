@@ -53,7 +53,13 @@ gameLoop:
 
 showGameOverScreen:
     call DisplayGameOver        ;Show "Game Over"
-    call WaitMsg                ;Wait for key press
+    
+    ;FIX: Use ReadChar instead of WaitMsg.
+    ;WaitMsg automatically prints "Press any key to continue...", which conflicts
+    ;with our custom "Press any key to exit." message.
+    ;ReadChar waits for input silently.
+    call ReadChar
+    
     exit                        ;Exit program
 main ENDP
 
@@ -286,6 +292,13 @@ CheckFoodCollision PROC
     pop  esi
 
     add  score, 10              ;Add 10 points
+
+    ;HARD MODE: Speed up the game
+    cmp gameDelay, 30           ;Check if we're at max speed (30ms)
+    jle skipSpeedUp             ;If yes, don't speed up more
+    sub gameDelay, 5            ;If no, get 5ms faster
+
+skipSpeedUp:
     call UpdateScoreDisplay
     call PlaceFood              ;Place new food
 
@@ -307,14 +320,22 @@ CheckWallCollision PROC
     mov  ax, (COORD PTR [esi]).X
     mov  bx, (COORD PTR [esi]).Y
 
+    ;UPDATED LOGIC:
+    ;We use 'jle' (less or equal) and 'jge' (greater or equal)
+    ;so the game ends instantly if you touch the wall coordinate.
+    
     cmp  ax, MIN_X              ;Hit left wall?
-    jl   setGameOver
+    jle  setGameOver            ;IF X <= MIN_X -> DIE
+    
     cmp  ax, MAX_X              ;Hit right wall?
-    jg   setGameOver
+    jge  setGameOver            ;IF X >= MAX_X -> DIE
+    
     cmp  bx, MIN_Y              ;Hit top wall?
-    jl   setGameOver
+    jle  setGameOver            ;IF Y <= MIN_Y -> DIE
+    
     cmp  bx, MAX_Y              ;Hit bottom wall?
-    jg   setGameOver
+    jge  setGameOver            ;IF Y >= MAX_Y -> DIE
+    
     jmp  noWallCollision
 
 setGameOver:
@@ -527,7 +548,11 @@ UpdateScoreDisplay PROC
     call WriteString
     mov  eax, score
     call WriteDec
-    call WriteString           ;Write a space to clear old digits
+    
+    ;FIX: Use WriteChar to print spaces instead of accidentally re-printing "Score:"
+    mov  al, ' '
+    call WriteChar
+    call WriteChar             ;Write spaces to ensure old digits are cleared
     
     popad
     pop  ebp
